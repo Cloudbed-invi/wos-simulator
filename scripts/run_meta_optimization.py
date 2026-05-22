@@ -95,16 +95,21 @@ def main():
                 "jobs": 4
             }
 
+            env = os.environ.copy()
+            env["PYTHONPATH"] = os.getcwd()
+
             process = subprocess.Popen(
-                [sys.executable, "dashboard/optimize_ratio.py"],
+                [sys.executable, "-m", "dashboard.optimize_ratio"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                env=env
             )
             stdout, stderr = process.communicate(input=json.dumps(payload))
 
             if process.returncode != 0:
+                print(f"Subprocess failed with code {process.returncode}:\nSTDERR: {stderr}")
                 continue
 
             try:
@@ -118,7 +123,11 @@ def main():
                     best_combo = combo
                     print(f"New Best for {scenario_name}: {combo} -> {best['infantry_pct']:.0f}/{best['lancer_pct']:.0f}/{best['marksman_pct']:.0f} (Win Rate: {best['win_rate_pct']:.1f}%, Margin: {best['avg_margin']:.0f})")
             except Exception as e:
-                pass
+                print(f"Parse error: {e}")
+
+        if best_combo is None:
+            print(f"\n>>> ERROR: All combinations failed for {scenario_name}. Please check the STDERR above. <<<")
+            continue
 
         print(f"\n>>> FINAL BEST FOR {scenario_name} <<<")
         print(f"Joiners: {', '.join(best_combo)}")
