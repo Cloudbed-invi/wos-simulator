@@ -146,16 +146,14 @@ def main():
     w2_defend = build_fighter_cfg(whale2_cfg, is_rally_lead=False)
 
     # 1. You Attacking Whale 1
-    evaluate_scenario("You Attacking Whale 1's Garrison", user_attack, w1_defend, "attacker", True)
-
-    # 2. Whale 1 Attacking You
-    evaluate_scenario("Whale 1 Rallying Your Garrison", w1_attack, user_defend, "defender", False)
-
-    # 3. You Attacking Whale 2
-    evaluate_scenario("You Attacking Whale 2's Garrison", user_attack, w2_defend, "attacker", True)
-
-    # 4. Whale 2 Attacking You
-    evaluate_scenario("Whale 2 Rallying Your Garrison", w2_attack, user_defend, "defender", False)
+    # We will optimize Whale 1's attack and defense against a matched opponent (Whale 2)
+    # This gives Whale 1 the mathematically best setup for the actual Castle Battle!
+    
+    # Whale 1 Attacking Whale 2
+    evaluate_scenario("State Whale 1 Attacking", w1_attack, w2_defend, "attacker", True)
+    
+    # Whale 1 Defending against Whale 2
+    evaluate_scenario("State Whale 1 Defending", w2_attack, w1_defend, "defender", False)
 
 if __name__ == "__main__":
     main()
