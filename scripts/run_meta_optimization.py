@@ -127,7 +127,7 @@ def main():
 
         if best_combo is None:
             print(f"\n>>> ERROR: All combinations failed for {scenario_name}. Please check the STDERR above. <<<")
-            continue
+            return
 
         print(f"\n>>> FINAL BEST FOR {scenario_name} <<<")
         print(f"Joiners: {', '.join(best_combo)}")
