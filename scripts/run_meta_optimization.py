@@ -4,6 +4,7 @@ import itertools
 import sys
 import os
 import copy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def main():
     if not os.path.exists("dashboard/optimize_ratio.py"):
@@ -47,7 +48,50 @@ def main():
             
         return fighter
 
-    def run_optimization(scenario_name, attacker_cfg, defender_cfg, optimize_side="attacker", joiner_combos=None):
+    def run_single_combo(combo, attacker_cfg, defender_cfg, optimize_side, phase2_fixed_ratio):
+        att = copy.deepcopy(attacker_cfg)
+        def_cfg = copy.deepcopy(defender_cfg)
+        
+        if optimize_side == "attacker":
+            att["joiners"] = [{"name": j} for j in combo]
+        else:
+            def_cfg["joiners"] = [{"name": j} for j in combo]
+            
+        payload = {
+            "attacker": att,
+            "defender": def_cfg,
+            "rally_mode": True,
+            "optimize_side": optimize_side,
+            "search_mode": "adaptive",
+            "search_replicates": 1,
+            "jobs": 1  # Reduce jobs per subprocess to allow higher ThreadPool concurrency
+        }
+        
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.getcwd()
+
+        process = subprocess.Popen(
+            [sys.executable, "-m", "dashboard.optimize_ratio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env
+        )
+        stdout, stderr = process.communicate(input=json.dumps(payload))
+
+        if process.returncode != 0:
+            return combo, None, f"Subprocess failed with code {process.returncode}:\nSTDERR: {stderr}"
+            
+        try:
+            lines = stdout.strip().split('\n')
+            result = json.loads(lines[-1])
+            best = result["best"]
+            return combo, best, None
+        except Exception as e:
+            return combo, None, f"Parse error: {e}"
+
+    def run_optimization(scenario_name, attacker_cfg, defender_cfg, optimize_side="attacker", joiner_combos=None, is_phase2=False):
         print(f"\n{'='*60}")
         print(f"Starting: {scenario_name}")
         print(f"{'='*60}")
@@ -58,51 +102,26 @@ def main():
         best_overall = None
         best_combo = None
         
-        for combo in joiner_combos:
-            if optimize_side == "attacker":
-                attacker_cfg["joiners"] = [{"name": j} for j in combo]
-            else:
-                defender_cfg["joiners"] = [{"name": j} for j in combo]
-                
-            payload = {
-                "attacker": copy.deepcopy(attacker_cfg),
-                "defender": copy.deepcopy(defender_cfg),
-                "rally_mode": True,
-                "optimize_side": optimize_side,
-                "search_mode": "adaptive",
-                "search_replicates": 1,
-                "jobs": 4
+        # Determine concurrency. If solo (1 combo), just 1 thread. If phase 2 (35 combos), use 8 threads.
+        max_workers = 8 if len(joiner_combos) > 1 else 1
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(run_single_combo, combo, attacker_cfg, defender_cfg, optimize_side, is_phase2): combo 
+                for combo in joiner_combos
             }
             
-            env = os.environ.copy()
-            env["PYTHONPATH"] = os.getcwd()
-
-            process = subprocess.Popen(
-                [sys.executable, "-m", "dashboard.optimize_ratio"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env
-            )
-            stdout, stderr = process.communicate(input=json.dumps(payload))
-
-            if process.returncode != 0:
-                print(f"Subprocess failed with code {process.returncode}:\nSTDERR: {stderr}")
-                continue
-                
-            try:
-                lines = stdout.strip().split('\n')
-                result = json.loads(lines[-1])
-                best = result["best"]
-                
+            for future in as_completed(futures):
+                combo, best, error = future.result()
+                if error:
+                    print(error)
+                    continue
+                    
                 if best_overall is None or best["win_rate"] > best_overall["win_rate"] or (best["win_rate"] == best_overall["win_rate"] and best["avg_margin"] > best_overall["avg_margin"]):
                     best_overall = best
                     best_combo = combo
                     if combo:
                         print(f"New Best: {combo} -> {best['infantry_pct']:.0f}/{best['lancer_pct']:.0f}/{best['marksman_pct']:.0f} (Win Rate: {best['win_rate_pct']:.1f}%, Margin: {best['avg_margin']:.0f})")
-            except Exception as e:
-                print(f"Parse error: {e}")
                 
         if best_combo is None:
             print(f"\n>>> ERROR: All combinations failed for {scenario_name}. Check STDERR. <<<")
@@ -122,7 +141,6 @@ def main():
     for unit in opponent_cfg["stats"]:
         opponent_cfg["stats"][unit] = [val * 1.05 for val in opponent_cfg["stats"][unit]]
 
-    # Helper to set specific ratios for opponent
     def set_troops(cfg, inf_pct, lanc_pct, mark_pct):
         cfg["troops"] = {
             "infantry": int(1500000 * (inf_pct / 100)),
@@ -131,7 +149,7 @@ def main():
         }
         return cfg
 
-    opp_attack_ratios = [(50, 20, 30), (50, 0, 50), (50, 10, 40)]
+    opp_attack_ratios = [(50, 20, 30), (50, 0, 50), (50, 10, 40), (34, 33, 33)]
     opp_defend_ratios = [(50, 30, 20), (60, 20, 20), (50, 0, 50), (33, 33, 34)]
     
     available_joiners = ["Jessie", "Jasser", "Seo-yoon", "Patrick", "Sergey", "Flint", "Zinman", "Alonso", "Philly", "Jeronimo"]
@@ -144,7 +162,6 @@ def main():
     def_valid_joiners = [j for j in available_joiners if j not in w1_defend_leads]
 
     att_joiner_combos = list(itertools.combinations(att_valid_joiners, 4))
-    
     def_joiner_combos = list(itertools.combinations(def_valid_joiners, 4))
     def_joiner_combos = [c for c in def_joiner_combos if sum(1 for j in c if j in defensive_joiners) >= 2]
 
@@ -153,55 +170,42 @@ def main():
     print("PHASE 1: SOLO ATTACKS (NO JOINERS)")
     print("#"*70)
     
-    # 1A: Whale 1 Attacking (Opponent Defending)
     for ratio in opp_defend_ratios:
         w1_att = build_fighter_cfg(whale1_cfg, is_rally_lead=True)
-        w1_att["joiners"] = [] # Force solo
-        
+        w1_att["joiners"] = []
         opp_def = build_fighter_cfg(opponent_cfg, is_rally_lead=False)
-        opp_def["joiners"] = [] # Force solo
+        opp_def["joiners"] = []
         opp_def = set_troops(opp_def, *ratio)
-        
-        run_optimization(f"Whale 1 Attacking (Opponent Defends with {ratio}) [SOLO]", w1_att, opp_def, optimize_side="attacker")
+        run_optimization(f"Whale 1 Attacking (Opponent Defends with {ratio}) [SOLO]", w1_att, opp_def, optimize_side="attacker", is_phase2=False)
 
-    # 1B: Whale 1 Defending (Opponent Attacking)
     for ratio in opp_attack_ratios:
         w1_def = build_fighter_cfg(whale1_cfg, is_rally_lead=False)
-        w1_def["joiners"] = [] # Force solo
-        
+        w1_def["joiners"] = []
         opp_att = build_fighter_cfg(opponent_cfg, is_rally_lead=True)
-        opp_att["joiners"] = [] # Force solo
+        opp_att["joiners"] = []
         opp_att = set_troops(opp_att, *ratio)
-        
-        run_optimization(f"Whale 1 Defending (Opponent Attacks with {ratio}) [SOLO]", opp_att, w1_def, optimize_side="defender")
-
+        run_optimization(f"Whale 1 Defending (Opponent Attacks with {ratio}) [SOLO]", opp_att, w1_def, optimize_side="defender", is_phase2=False)
 
     # --- PHASE 2: RALLY ATTACKS ---
     print("\n" + "#"*70)
     print("PHASE 2: RALLY ATTACKS (META JOINERS)")
     print("#"*70)
     
-    # 2A: Whale 1 Attacking (Opponent Defends with 4x Patrick)
     for ratio in opp_defend_ratios:
         w1_att = build_fighter_cfg(whale1_cfg, is_rally_lead=True)
-        
         opp_def_cfg = copy.deepcopy(opponent_cfg)
         opp_def_cfg["defense_joiners"] = ["Patrick", "Patrick", "Patrick", "Patrick"]
         opp_def = build_fighter_cfg(opp_def_cfg, is_rally_lead=False)
         opp_def = set_troops(opp_def, *ratio)
-        
-        run_optimization(f"Whale 1 Attacking (Opponent Defends with {ratio} + 4x Patrick)", w1_att, opp_def, optimize_side="attacker", joiner_combos=att_joiner_combos)
+        run_optimization(f"Whale 1 Attacking (Opponent Defends with {ratio} + 4x Patrick)", w1_att, opp_def, optimize_side="attacker", joiner_combos=att_joiner_combos, is_phase2=True)
 
-    # 2B: Whale 1 Defending (Opponent Attacks with 4x Jessie)
     for ratio in opp_attack_ratios:
         w1_def = build_fighter_cfg(whale1_cfg, is_rally_lead=False)
-        
         opp_att_cfg = copy.deepcopy(opponent_cfg)
         opp_att_cfg["rally_joiners"] = ["Jessie", "Jessie", "Jessie", "Jessie"]
         opp_att = build_fighter_cfg(opp_att_cfg, is_rally_lead=True)
         opp_att = set_troops(opp_att, *ratio)
-        
-        run_optimization(f"Whale 1 Defending (Opponent Attacks with {ratio} + 4x Jessie)", opp_att, w1_def, optimize_side="defender", joiner_combos=def_joiner_combos)
+        run_optimization(f"Whale 1 Defending (Opponent Attacks with {ratio} + 4x Jessie)", opp_att, w1_def, optimize_side="defender", joiner_combos=def_joiner_combos, is_phase2=True)
 
 if __name__ == "__main__":
     main()
