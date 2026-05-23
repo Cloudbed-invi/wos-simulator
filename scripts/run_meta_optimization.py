@@ -193,9 +193,9 @@ def main():
 
     opp_attack_ratios = [(50, 20, 30), (50, 0, 50), (50, 10, 40), (34, 33, 33)]
     opp_defend_ratios = [(50, 30, 20), (60, 20, 20), (50, 0, 50), (33, 33, 34)]
-    
     available_joiners = ["Jessie", "Jasser", "Seo-yoon", "Patrick", "Sergey", "Flint", "Zinman", "Alonso", "Philly", "Jeronimo"]
     defensive_joiners = ["Patrick", "Sergey"]
+    offensive_joiners = ["Jessie", "Jasser", "Seo-yoon", "Jeronimo"]
 
     w1_attack_leads = [h for h in whale1_cfg.get("rally_leads", [])]
     w1_defend_leads = [h for h in whale1_cfg.get("garrison_leads", [])]
@@ -204,6 +204,7 @@ def main():
     def_valid_joiners = [j for j in available_joiners if j not in w1_defend_leads]
 
     att_joiner_combos = list(itertools.combinations(att_valid_joiners, 4))
+    att_joiner_combos = [c for c in att_joiner_combos if sum(1 for j in c if j in offensive_joiners) >= 2]
     def_joiner_combos = list(itertools.combinations(def_valid_joiners, 4))
     def_joiner_combos = [c for c in def_joiner_combos if sum(1 for j in c if j in defensive_joiners) >= 2]
 
