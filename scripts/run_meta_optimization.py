@@ -6,7 +6,6 @@ import os
 import copy
 
 def main():
-    # Ensure we are in the scripts directory or the project root
     if not os.path.exists("dashboard/optimize_ratio.py"):
         if os.path.exists("../dashboard/optimize_ratio.py"):
             os.chdir("..")
@@ -17,17 +16,11 @@ def main():
     with open("scripts/run_config.json", "r") as f:
         config = json.load(f)
 
-    user_cfg = config["user"]
     whale1_cfg = config["whale1"]
-    whale2_cfg = config["whale2"]
-
-    # Candidate joiners for the user
-    available_joiners = ["Jessie", "Jasser", "Seo-yoon", "Patrick", "Ahmose", "Hector", "Gwen"]
 
     def build_fighter_cfg(cfg_data, is_rally_lead=False):
-        # Base config for a fighter
         fighter = {
-            "troops": {"infantry": 100000, "lancer": 100000, "marksman": 100000},
+            "troops": {"infantry": 500000, "lancer": 500000, "marksman": 500000},
             "troop_types": {
                 "infantry": f"infantry_{cfg_data['troop_tier']}",
                 "lancer": f"lancer_{cfg_data['troop_tier']}",
@@ -47,66 +40,40 @@ def main():
         if len(leads) > 1: fighter["heroes"]["lancer"]["name"] = leads[1]
         if len(leads) > 2: fighter["heroes"]["marksman"]["name"] = leads[2]
         
-        # Add default defense joiners for whales
-        if not is_rally_lead and "defense_joiners" in cfg_data:
+        if "rally_joiners" in cfg_data and is_rally_lead:
+            fighter["joiners"] = [{"name": j} for j in cfg_data["rally_joiners"]]
+        if "defense_joiners" in cfg_data and not is_rally_lead:
             fighter["joiners"] = [{"name": j} for j in cfg_data["defense_joiners"]]
             
         return fighter
 
-    def evaluate_scenario(scenario_name, attacker_base, defender_base, optimize_side, user_is_attacker):
-        print(f"\n{'='*50}\nStarting Scenario: {scenario_name}\n{'='*50}")
-    def evaluate_scenario(scenario_name, attacker_cfg, defender_cfg, optimize_side="attacker", is_attack=True):
-        print(f"\n==================================================")
-        print(f"Starting Scenario: {scenario_name}")
-        print(f"==================================================")
-
-        # Restrict to Gen 3 and below
-        available_joiners = ["Jessie", "Jasser", "Seo-yoon", "Patrick", "Sergey", "Flint", "Zinman", "Alonso", "Philly", "Jeronimo"]
-        defensive_joiners = ["Patrick", "Sergey"]
-
-        leads = attacker_cfg["heroes"] if optimize_side == "attacker" else defender_cfg["heroes"]
-        lead_names = [h["name"] for h in leads.values()]
-
-        valid_joiners = [j for j in available_joiners if j not in lead_names]
-        joiner_combos = list(itertools.combinations(valid_joiners, 4))
+    def run_optimization(scenario_name, attacker_cfg, defender_cfg, optimize_side="attacker", joiner_combos=None):
+        print(f"\n{'='*60}")
+        print(f"Starting: {scenario_name}")
+        print(f"{'='*60}")
         
-        # Filter for defensive joiners if defending
-        if not is_attack:
-            joiner_combos = [combo for combo in joiner_combos if sum(1 for j in combo if j in defensive_joiners) >= 2]
-
-        print(f"Testing {len(joiner_combos)} different joiner combinations with 1.5M troops per side...")
-
+        if joiner_combos is None:
+            joiner_combos = [[]]
+            
         best_overall = None
         best_combo = None
-
+        
         for combo in joiner_combos:
             if optimize_side == "attacker":
                 attacker_cfg["joiners"] = [{"name": j} for j in combo]
             else:
                 defender_cfg["joiners"] = [{"name": j} for j in combo]
-
+                
             payload = {
-                "attacker": {
-                    "troops": {"infantry": 500000, "lancer": 500000, "marksman": 500000},
-                    "troop_types": attacker_cfg["troop_types"],
-                    "stats": attacker_cfg["stats"],
-                    "heroes": attacker_cfg["heroes"],
-                    "joiners": attacker_cfg.get("joiners", [])
-                },
-                "defender": {
-                    "troops": {"infantry": 500000, "lancer": 500000, "marksman": 500000},
-                    "troop_types": defender_cfg["troop_types"],
-                    "stats": defender_cfg["stats"],
-                    "heroes": defender_cfg["heroes"],
-                    "joiners": defender_cfg.get("joiners", [])
-                },
+                "attacker": copy.deepcopy(attacker_cfg),
+                "defender": copy.deepcopy(defender_cfg),
                 "rally_mode": True,
                 "optimize_side": optimize_side,
                 "search_mode": "adaptive",
                 "search_replicates": 1,
                 "jobs": 4
             }
-
+            
             env = os.environ.copy()
             env["PYTHONPATH"] = os.getcwd()
 
@@ -123,63 +90,118 @@ def main():
             if process.returncode != 0:
                 print(f"Subprocess failed with code {process.returncode}:\nSTDERR: {stderr}")
                 continue
-
+                
             try:
                 lines = stdout.strip().split('\n')
                 result = json.loads(lines[-1])
                 best = result["best"]
                 
-                # We want the highest win rate, then best margin
                 if best_overall is None or best["win_rate"] > best_overall["win_rate"] or (best["win_rate"] == best_overall["win_rate"] and best["avg_margin"] > best_overall["avg_margin"]):
                     best_overall = best
                     best_combo = combo
-                    print(f"New Best for {scenario_name}: {combo} -> {best['infantry_pct']:.0f}/{best['lancer_pct']:.0f}/{best['marksman_pct']:.0f} (Win Rate: {best['win_rate_pct']:.1f}%, Margin: {best['avg_margin']:.0f})")
+                    if combo:
+                        print(f"New Best: {combo} -> {best['infantry_pct']:.0f}/{best['lancer_pct']:.0f}/{best['marksman_pct']:.0f} (Win Rate: {best['win_rate_pct']:.1f}%, Margin: {best['avg_margin']:.0f})")
             except Exception as e:
                 print(f"Parse error: {e}")
-
+                
         if best_combo is None:
-            print(f"\n>>> ERROR: All combinations failed for {scenario_name}. Please check the STDERR above. <<<")
+            print(f"\n>>> ERROR: All combinations failed for {scenario_name}. Check STDERR. <<<")
             return
-
+            
         print(f"\n>>> FINAL BEST FOR {scenario_name} <<<")
-        print(f"Joiners: {', '.join(best_combo)}")
+        if best_combo:
+            print(f"Joiners: {', '.join(best_combo)}")
+        else:
+            print(f"Joiners: NONE (Solo Phase)")
         print(f"Ratio: {best_overall['infantry_pct']:.0f}% Inf / {best_overall['lancer_pct']:.0f}% Lanc / {best_overall['marksman_pct']:.0f}% Mark")
         print(f"Win Rate: {best_overall['win_rate_pct']:.1f}%")
-        print(f"Average Margin: {best_overall['avg_margin']:.0f} survivors")
+        print(f"Average Margin: {best_overall['avg_margin']:.0f} survivors\n")
 
-    # Build the configurations
-    user_attack = build_fighter_cfg(user_cfg, is_rally_lead=True)
-    user_defend = build_fighter_cfg(user_cfg, is_rally_lead=False)
-    
-    w1_attack = build_fighter_cfg(whale1_cfg, is_rally_lead=True)
-    w1_defend = build_fighter_cfg(whale1_cfg, is_rally_lead=False)
-    
+    # Opponent setup
     opponent_cfg = copy.deepcopy(whale1_cfg)
     for unit in opponent_cfg["stats"]:
         opponent_cfg["stats"][unit] = [val * 1.05 for val in opponent_cfg["stats"][unit]]
-    
-    # Opponent Defending (Whale 1 Attacking)
-    opp_defend_cfg = copy.deepcopy(opponent_cfg)
-    opp_defend_cfg["garrison_leads"] = ["Logan", "Greg", "Philly"]
-    opp_defend_cfg["defense_joiners"] = ["Patrick", "Patrick", "Patrick", "Patrick"]
-    w2_defend = build_fighter_cfg(opp_defend_cfg, is_rally_lead=False)
 
-    # Opponent Attacking (Whale 1 Defending)
-    opp_attack_cfg = copy.deepcopy(opponent_cfg)
-    opp_attack_cfg["rally_leads"] = ["Jeronimo", "Greg", "Mia"]
-    opp_attack_cfg["rally_joiners"] = ["Jessie", "Jessie", "Jessie", "Jessie"]
-    w2_attack = build_fighter_cfg(opp_attack_cfg, is_rally_lead=True)
+    # Helper to set specific ratios for opponent
+    def set_troops(cfg, inf_pct, lanc_pct, mark_pct):
+        cfg["troops"] = {
+            "infantry": int(1500000 * (inf_pct / 100)),
+            "lancer": int(1500000 * (lanc_pct / 100)),
+            "marksman": int(1500000 * (mark_pct / 100))
+        }
+        return cfg
 
-    # We will optimize Whale 1's attack and defense against this slightly stronger opponent
-    print("Opponent configured with +5% stats.")
-    print("Opponent Defending Joiners: 4x Patrick")
-    print("Opponent Attacking Joiners: 4x Jessie\n")
+    opp_attack_ratios = [(50, 20, 30), (50, 0, 50), (50, 10, 40)]
+    opp_defend_ratios = [(50, 30, 20), (60, 20, 20), (50, 0, 50), (33, 33, 34)]
     
-    # Whale 1 Attacking Opponent
-    evaluate_scenario("State Whale 1 Attacking", w1_attack, w2_defend, "attacker", True)
+    available_joiners = ["Jessie", "Jasser", "Seo-yoon", "Patrick", "Sergey", "Flint", "Zinman", "Alonso", "Philly", "Jeronimo"]
+    defensive_joiners = ["Patrick", "Sergey"]
+
+    w1_attack_leads = [h for h in whale1_cfg.get("rally_leads", [])]
+    w1_defend_leads = [h for h in whale1_cfg.get("garrison_leads", [])]
+
+    att_valid_joiners = [j for j in available_joiners if j not in w1_attack_leads]
+    def_valid_joiners = [j for j in available_joiners if j not in w1_defend_leads]
+
+    att_joiner_combos = list(itertools.combinations(att_valid_joiners, 4))
     
-    # Whale 1 Defending against Opponent
-    evaluate_scenario("State Whale 1 Defending", w2_attack, w1_defend, "defender", False)
+    def_joiner_combos = list(itertools.combinations(def_valid_joiners, 4))
+    def_joiner_combos = [c for c in def_joiner_combos if sum(1 for j in c if j in defensive_joiners) >= 2]
+
+    # --- PHASE 1: SOLO ATTACKS ---
+    print("\n" + "#"*70)
+    print("PHASE 1: SOLO ATTACKS (NO JOINERS)")
+    print("#"*70)
+    
+    # 1A: Whale 1 Attacking (Opponent Defending)
+    for ratio in opp_defend_ratios:
+        w1_att = build_fighter_cfg(whale1_cfg, is_rally_lead=True)
+        w1_att["joiners"] = [] # Force solo
+        
+        opp_def = build_fighter_cfg(opponent_cfg, is_rally_lead=False)
+        opp_def["joiners"] = [] # Force solo
+        opp_def = set_troops(opp_def, *ratio)
+        
+        run_optimization(f"Whale 1 Attacking (Opponent Defends with {ratio}) [SOLO]", w1_att, opp_def, optimize_side="attacker")
+
+    # 1B: Whale 1 Defending (Opponent Attacking)
+    for ratio in opp_attack_ratios:
+        w1_def = build_fighter_cfg(whale1_cfg, is_rally_lead=False)
+        w1_def["joiners"] = [] # Force solo
+        
+        opp_att = build_fighter_cfg(opponent_cfg, is_rally_lead=True)
+        opp_att["joiners"] = [] # Force solo
+        opp_att = set_troops(opp_att, *ratio)
+        
+        run_optimization(f"Whale 1 Defending (Opponent Attacks with {ratio}) [SOLO]", opp_att, w1_def, optimize_side="defender")
+
+
+    # --- PHASE 2: RALLY ATTACKS ---
+    print("\n" + "#"*70)
+    print("PHASE 2: RALLY ATTACKS (META JOINERS)")
+    print("#"*70)
+    
+    # 2A: Whale 1 Attacking (Opponent Defends with 4x Patrick)
+    for ratio in opp_defend_ratios:
+        w1_att = build_fighter_cfg(whale1_cfg, is_rally_lead=True)
+        
+        opp_def_cfg = copy.deepcopy(opponent_cfg)
+        opp_def_cfg["defense_joiners"] = ["Patrick", "Patrick", "Patrick", "Patrick"]
+        opp_def = build_fighter_cfg(opp_def_cfg, is_rally_lead=False)
+        opp_def = set_troops(opp_def, *ratio)
+        
+        run_optimization(f"Whale 1 Attacking (Opponent Defends with {ratio} + 4x Patrick)", w1_att, opp_def, optimize_side="attacker", joiner_combos=att_joiner_combos)
+
+    # 2B: Whale 1 Defending (Opponent Attacks with 4x Jessie)
+    for ratio in opp_attack_ratios:
+        w1_def = build_fighter_cfg(whale1_cfg, is_rally_lead=False)
+        
+        opp_att_cfg = copy.deepcopy(opponent_cfg)
+        opp_att_cfg["rally_joiners"] = ["Jessie", "Jessie", "Jessie", "Jessie"]
+        opp_att = build_fighter_cfg(opp_att_cfg, is_rally_lead=True)
+        opp_att = set_troops(opp_att, *ratio)
+        
+        run_optimization(f"Whale 1 Defending (Opponent Attacks with {ratio} + 4x Jessie)", opp_att, w1_def, optimize_side="defender", joiner_combos=def_joiner_combos)
 
 if __name__ == "__main__":
     main()
