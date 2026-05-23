@@ -141,18 +141,32 @@ def main():
     
     w1_attack = build_fighter_cfg(whale1_cfg, is_rally_lead=True)
     w1_defend = build_fighter_cfg(whale1_cfg, is_rally_lead=False)
-
-    w2_attack = build_fighter_cfg(whale2_cfg, is_rally_lead=True)
-    w2_defend = build_fighter_cfg(whale2_cfg, is_rally_lead=False)
-
-    # 1. You Attacking Whale 1
-    # We will optimize Whale 1's attack and defense against a matched opponent (Whale 2)
-    # This gives Whale 1 the mathematically best setup for the actual Castle Battle!
     
-    # Whale 1 Attacking Whale 2
+    opponent_cfg = copy.deepcopy(whale1_cfg)
+    for unit in opponent_cfg["stats"]:
+        opponent_cfg["stats"][unit] = [val * 1.05 for val in opponent_cfg["stats"][unit]]
+    
+    # Opponent Defending (Whale 1 Attacking)
+    opp_defend_cfg = copy.deepcopy(opponent_cfg)
+    opp_defend_cfg["garrison_leads"] = ["Logan", "Greg", "Philly"]
+    opp_defend_cfg["defense_joiners"] = ["Patrick", "Patrick", "Patrick", "Patrick"]
+    w2_defend = build_fighter_cfg(opp_defend_cfg, is_rally_lead=False)
+
+    # Opponent Attacking (Whale 1 Defending)
+    opp_attack_cfg = copy.deepcopy(opponent_cfg)
+    opp_attack_cfg["rally_leads"] = ["Jeronimo", "Greg", "Mia"]
+    opp_attack_cfg["rally_joiners"] = ["Jessie", "Jessie", "Jessie", "Jessie"]
+    w2_attack = build_fighter_cfg(opp_attack_cfg, is_rally_lead=True)
+
+    # We will optimize Whale 1's attack and defense against this slightly stronger opponent
+    print("Opponent configured with +5% stats.")
+    print("Opponent Defending Joiners: 4x Patrick")
+    print("Opponent Attacking Joiners: 4x Jessie\n")
+    
+    # Whale 1 Attacking Opponent
     evaluate_scenario("State Whale 1 Attacking", w1_attack, w2_defend, "attacker", True)
     
-    # Whale 1 Defending against Whale 2
+    # Whale 1 Defending against Opponent
     evaluate_scenario("State Whale 1 Defending", w2_attack, w1_defend, "defender", False)
 
 if __name__ == "__main__":
