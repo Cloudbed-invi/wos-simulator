@@ -55,43 +55,55 @@ def main():
 
     def evaluate_scenario(scenario_name, attacker_base, defender_base, optimize_side, user_is_attacker):
         print(f"\n{'='*50}\nStarting Scenario: {scenario_name}\n{'='*50}")
+    def evaluate_scenario(scenario_name, attacker_cfg, defender_cfg, optimize_side="attacker", is_attack=True):
+        print(f"\n==================================================")
+        print(f"Starting Scenario: {scenario_name}")
+        print(f"==================================================")
+
+        # Restrict to Gen 3 and below
+        available_joiners = ["Jessie", "Jasser", "Seo-yoon", "Patrick", "Sergey", "Flint", "Zinman", "Alonso", "Philly", "Jeronimo"]
+        defensive_joiners = ["Patrick", "Sergey"]
+
+        leads = attacker_cfg["heroes"] if optimize_side == "attacker" else defender_cfg["heroes"]
+        lead_names = [h["name"] for h in leads.values()]
+
+        valid_joiners = [j for j in available_joiners if j not in lead_names]
+        joiner_combos = list(itertools.combinations(valid_joiners, 4))
+        
+        # Filter for defensive joiners if defending
+        if not is_attack:
+            joiner_combos = [combo for combo in joiner_combos if sum(1 for j in combo if j in defensive_joiners) >= 2]
+
+        print(f"Testing {len(joiner_combos)} different joiner combinations with 1.5M troops per side...")
+
         best_overall = None
         best_combo = None
 
-        user_leads = [
-            attacker_base["heroes"]["infantry"]["name"],
-            attacker_base["heroes"]["lancer"]["name"],
-            attacker_base["heroes"]["marksman"]["name"]
-        ] if user_is_attacker else [
-            defender_base["heroes"]["infantry"]["name"],
-            defender_base["heroes"]["lancer"]["name"],
-            defender_base["heroes"]["marksman"]["name"]
-        ]
-
-        # Filter out joiners that are already in the lead
-        valid_joiners = [j for j in available_joiners if j not in user_leads]
-        
-        # Generate combinations of 4 joiners
-        joiner_combos = list(itertools.combinations(valid_joiners, 4))
-        print(f"Testing {len(joiner_combos)} different joiner combinations...")
-
         for combo in joiner_combos:
-            att_cfg = copy.deepcopy(attacker_base)
-            def_cfg = copy.deepcopy(defender_base)
-
-            joiners_formatted = [{"name": j} for j in combo]
-            if user_is_attacker:
-                att_cfg["joiners"] = joiners_formatted
+            if optimize_side == "attacker":
+                attacker_cfg["joiners"] = [{"name": j} for j in combo]
             else:
-                def_cfg["joiners"] = joiners_formatted
+                defender_cfg["joiners"] = [{"name": j} for j in combo]
 
             payload = {
-                "attacker": att_cfg,
-                "defender": def_cfg,
+                "attacker": {
+                    "troops": {"infantry": 500000, "lancer": 500000, "marksman": 500000},
+                    "troop_types": attacker_cfg["troop_types"],
+                    "stats": attacker_cfg["stats"],
+                    "heroes": attacker_cfg["heroes"],
+                    "joiners": attacker_cfg.get("joiners", [])
+                },
+                "defender": {
+                    "troops": {"infantry": 500000, "lancer": 500000, "marksman": 500000},
+                    "troop_types": defender_cfg["troop_types"],
+                    "stats": defender_cfg["stats"],
+                    "heroes": defender_cfg["heroes"],
+                    "joiners": defender_cfg.get("joiners", [])
+                },
                 "rally_mode": True,
                 "optimize_side": optimize_side,
                 "search_mode": "adaptive",
-                "search_replicates": 20,
+                "search_replicates": 1,
                 "jobs": 4
             }
 
