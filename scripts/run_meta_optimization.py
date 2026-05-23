@@ -69,7 +69,7 @@ def main():
                 
             total_margin = 0
             wins = 0
-            reps = 10
+            reps = 100
             for _ in range(reps):
                 res = fight_once(att, def_cfg, True)
                 margin = res["outcome"] if optimize_side == "attacker" else -res["outcome"]
