@@ -16,8 +16,8 @@
       "mark": [611.8, 556.4, 501.7, 433.4]
     },
     "troop_tier": "t10_fc5",
-    "rally_leads": ["Jeronimo", "Greg", "Mia"],
-    "garrison_leads": ["Jeronimo", "Greg", "Mia"],
+    "rally_leads": ["Jeronimo", "Mia", "Alonso"],
+    "garrison_leads": ["Jeronimo", "Mia", "Greg"],
     "defense_joiners": ["Patrick", "Jessie", "Seo-yoon", "Jasser"]
   },
   "whale2": {
