@@ -13,6 +13,11 @@ def main():
         else:
             print("Error: Must run from project root or scripts directory.")
             sys.exit(1)
+            
+    # Pre-load simulation assets for fast in-memory screening
+    sys.path.insert(0, os.getcwd())
+    from dashboard.simulate_common import prepare_simulation_environment, fight_once
+    prepare_simulation_environment()
 
     with open("scripts/run_config.json", "r") as f:
         config = json.load(f)
@@ -47,8 +52,41 @@ def main():
             fighter["joiners"] = [{"name": j} for j in cfg_data["defense_joiners"]]
             
         return fighter
+        
+    def fast_screen_combos(joiner_combos, attacker_cfg, defender_cfg, optimize_side):
+        results = []
+        
+        def test_combo(combo):
+            att = copy.deepcopy(attacker_cfg)
+            def_cfg = copy.deepcopy(defender_cfg)
+            
+            if optimize_side == "attacker":
+                att["joiners"] = [{"name": j} for j in combo]
+                att["troops"] = {"infantry": 500000, "lancer": 500000, "marksman": 500000}
+            else:
+                def_cfg["joiners"] = [{"name": j} for j in combo]
+                def_cfg["troops"] = {"infantry": 500000, "lancer": 500000, "marksman": 500000}
+                
+            total_margin = 0
+            wins = 0
+            reps = 10
+            for _ in range(reps):
+                res = fight_once(att, def_cfg, True)
+                margin = res["outcome"] if optimize_side == "attacker" else -res["outcome"]
+                total_margin += margin
+                if margin > 0:
+                    wins += 1
+            return combo, wins, total_margin
+            
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            for combo, wins, margin in executor.map(test_combo, joiner_combos):
+                results.append((wins, margin, combo))
+                
+        results.sort(reverse=True)
+        # Return top 3 combos for deep optimization
+        return [r[2] for r in results[:3]]
 
-    def run_single_combo(combo, attacker_cfg, defender_cfg, optimize_side, phase2_fixed_ratio):
+    def run_single_combo(combo, attacker_cfg, defender_cfg, optimize_side):
         att = copy.deepcopy(attacker_cfg)
         def_cfg = copy.deepcopy(defender_cfg)
         
@@ -64,7 +102,7 @@ def main():
             "optimize_side": optimize_side,
             "search_mode": "adaptive",
             "search_replicates": 1,
-            "jobs": 1  # Reduce jobs per subprocess to allow higher ThreadPool concurrency
+            "jobs": 1
         }
         
         env = os.environ.copy()
@@ -96,18 +134,22 @@ def main():
         print(f"Starting: {scenario_name}")
         print(f"{'='*60}")
         
-        if joiner_combos is None:
+        if joiner_combos is None or len(joiner_combos) == 0:
             joiner_combos = [[]]
+            
+        if is_phase2 and len(joiner_combos) > 1:
+            print(f"Fast screening {len(joiner_combos)} combinations in memory...")
+            joiner_combos = fast_screen_combos(joiner_combos, attacker_cfg, defender_cfg, optimize_side)
+            print(f"Deep optimizing the Top 3 combinations: {joiner_combos}")
             
         best_overall = None
         best_combo = None
         
-        # Determine concurrency. If solo (1 combo), just 1 thread. If phase 2 (35 combos), use 8 threads.
         max_workers = 8 if len(joiner_combos) > 1 else 1
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(run_single_combo, combo, attacker_cfg, defender_cfg, optimize_side, is_phase2): combo 
+                executor.submit(run_single_combo, combo, attacker_cfg, defender_cfg, optimize_side): combo 
                 for combo in joiner_combos
             }
             
